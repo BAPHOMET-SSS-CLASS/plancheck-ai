@@ -1,0 +1,72 @@
+import streamlit as st
+from google import genai
+from PIL import Image
+import fitz  # PyMuPDF สำหรับแปลง PDF เป็นรูปภาพ
+import io
+
+st.set_page_config(page_title="AI ตรวจแบบแปลนอาคารและโครงสร้าง", layout="wide")
+st.title("🤖 ระบบ AI ตรวจสอบแบบแปลนอาคารและโครงสร้างอัตโนมัติ")
+
+# ตั้งค่า API Key (รับฟรีได้ที่ Google AI Studio)
+api_key = st.sidebar.text_input("ใส่ Gemini API Key", type="password")
+
+# ส่วนกำหนด "รูปแบบที่ถูกต้อง" เพื่อให้ AI จดจำและใช้เป็นเกณฑ์ตรวจ
+st.sidebar.subheader("📏 เกณฑ์มาตรฐานที่ถูกต้อง (AI Memory)")
+standard_rules = st.sidebar.text_area(
+    "กำหนดกฎเกณฑ์หรือรูปแบบที่ถูกต้องของบริษัท/กฎหมาย:",
+    value="""1. ต้องมีตารางรายการแบบ (Title Block) มุมขวาล่าง ระบุชื่อโครงการ มาตราส่วน และวันที่ชัดเจน
+2. ระยะเสาและคานต้องระบุตัวเลขกำกับทุกช่วง (Grid Line)
+3. สัญลักษณ์ประตู หน้าต่าง และทางหนีไฟต้องแสดงชัดเจน
+4. ต้องมีช่องลงนามวิศวกรและสถาปนิกผู้ออกแบบ
+5. ตรวจสอบความสอดคล้องของขนาดห้องและทางเดิน (ทางเดินกว้างไม่น้อยกว่า 1.20 ม.)""",
+    height=220
+)
+
+uploaded_file = st.file_uploader("อัปโหลดไฟล์แปลน (รองรับ PNG, JPG, PDF)", type=["png", "jpg", "jpeg", "pdf"])
+
+if uploaded_file is not None:
+    col1, col2 = st.columns([1.2, 1])
+    image_to_check = None
+
+    # แปลงไฟล์เป็นรูปภาพเพื่อให้ AI วิเคราะห์
+    with col1:
+        st.subheader("📄 แบบแปลนที่ส่งตรวจ")
+        if uploaded_file.type == "application/pdf":
+            pdf_doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+            page = pdf_doc.load_page(0)  # ดึงหน้าแรกมาตรวจ
+            pix = page.get_pixmap(dpi=150)
+            image_to_check = Image.open(io.BytesIO(pix.tobytes("png")))
+            st.image(image_to_check, caption="หน้า 1 จากไฟล์ PDF", use_container_width=True)
+        else:
+            image_to_check = Image.open(uploaded_file)
+            st.image(image_to_check, use_container_width=True)
+
+    # ส่วนให้ AI ตรวจงาน
+    with col2:
+        st.subheader("🔍 ผลการตรวจสอบจาก AI")
+        if st.button("🚀 เริ่มให้ AI ตรวจแบบแปลน"):
+            if not api_key:
+                st.error("กรุณาใส่ Gemini API Key ที่แถบด้านซ้ายก่อนครับ")
+            else:
+                with st.spinner("AI กำลังอ่านแบบและเทียบกับเกณฑ์มาตรฐาน..."):
+                    try:
+                        client = genai.Client(api_key=api_key)
+                        prompt = f"""คุณคือวิศวกรและสถาปนิกผู้เชี่ยวชาญในการตรวจแบบแปลนก่อสร้าง
+จงตรวจสอบภาพแบบแปลนนี้ โดยเทียบกับ 'เกณฑ์มาตรฐานที่ถูกต้อง' ด้านล่างนี้อย่างละเอียด:
+
+{standard_rules}
+
+กรุณาสรุปผลการตรวจเป็นหัวข้อดังนี้:
+1. **ข้อมูลทั่วไปในแบบ:** (ชื่อโครงการ, มาตราส่วน, ประเภทแบบที่อ่านได้จากภาพ)
+2. **รายการที่ผ่านเกณฑ์:** (ระบุสิ่งที่ครบถ้วนและถูกต้องตามเกณฑ์)
+3. **จุดที่ผิดพลาด / ข้อมูลที่ขาดหาย:** (ระบุจุดที่ไม่ตรงตามเกณฑ์ หรือตัวเลข/สัญลักษณ์ที่หายไป)
+4. **คำแนะนำสำหรับแก้ไข:**
+5. **สรุปสถานะ:** [ผ่าน / ต้องแก้ไข]"""
+
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[image_to_check, prompt]
+                        )
+                        st.markdown(response.text)
+                    except Exception as e:
+                        st.error(f"เกิดข้อผิดพลาด: {e}")
